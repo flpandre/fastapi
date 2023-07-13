@@ -1,0 +1,10 @@
+version: '3.8'
+
+#x-volumes: &volumes
+#  - appdata:/app/app
+#
+#services:
+#  web: { volumes: *volumes }
+#
+#volumes:
+#  appdata:

@@ -1,0 +1,22 @@
+---
+sync:
+  defaults:
+    mode: two-way-resolved
+    watch:
+      pollingInterval: 10
+    ignore:
+      vcs: false
+      paths:
+        # Root .git folder
+        - "/.git/"
+
+        # System files
+        - ".DS_Store"
+        - "._*"
+
+        # Vim files
+        - "*~"
+        - "*.sw[a-p]"
+    permissions:
+      defaultFileMode: "0644"
+      defaultDirectoryMode: "0755"
