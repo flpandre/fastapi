@@ -5,7 +5,7 @@
 ## Installation
 
 * Clone this repository
-* `warden sign-certificat app.fastapi.test`
+* `warden sign-certificate app.fastapi.test`
 * `warden env build`
 * `warden env up`
 
