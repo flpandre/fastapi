@@ -6,7 +6,8 @@ loadEnvConfig "${WARDEN_ENV_PATH}" || exit $?
 assertDockerRunning
 
 if (( ${#WARDEN_PARAMS[@]} == 0 )) || [[ "${WARDEN_PARAMS[0]}" == "help" ]]; then
-  den env --help || exit $? && exit $?
+  # shellcheck disable=SC2153
+  $WARDEN_BIN env --help || exit $? && exit $?
 fi
 
 ## allow return codes from sub-process to bubble up normally
@@ -14,29 +15,16 @@ trap '' ERR
 
 ## define source repository
 if [[ -f "${WARDEN_HOME_DIR}/.env" ]]; then
-  eval "$(cat "${WARDEN_HOME_DIR}/.env" | sed 's/\r$//g' | grep "^WARDEN_")"
+  eval "$(sed 's/\r$//g' < "${WARDEN_HOME_DIR}/.env" | grep "^WARDEN_")"
 fi
-export WARDEN_IMAGE_REPOSITORY="${WARDEN_IMAGE_REPOSITORY:-"ghcr.io/swiftotter"}"
+export WARDEN_IMAGE_REPOSITORY="${WARDEN_IMAGE_REPOSITORY:-"docker.io/wardenenv"}"
 
 ## configure environment type defaults
 if [[ ${WARDEN_ENV_TYPE} =~ ^magento ]]; then
     export WARDEN_SVC_PHP_VARIANT=-${WARDEN_ENV_TYPE}
 fi
-
-if [[ ${NODE_VERSION} -ne 0 ]]; then
-    export WARDEN_SVC_PHP_NODE=-node${NODE_VERSION}
-fi
-
-if [[ -z ${DB_DISTRIBUTION} ]]; then
-    export DB_DISTRIBUTION="mariadb"
-fi
-
-if [[ -z ${DB_DISTRIBUTION_VERSION} ]]; then
-    if [[ ${DB_DISTRIBUTION} == "mysql" ]]; then
-        export DB_DISTRIBUTION_VERSION=${MYSQL_VERSION:-8.0}
-    else
-        export DB_DISTRIBUTION_VERSION=${MARIADB_VERSION:-10.4}
-    fi
+if [[ ${WARDEN_NIGHTLY} -eq 1 ]]; then
+    export WARDEN_SVC_PHP_IMAGE_SUFFIX="-indev"
 fi
 
 ## configure xdebug version
@@ -56,7 +44,8 @@ fi
 export CHOWN_DIR_LIST=${WARDEN_CHOWN_DIR_LIST:-}
 
 if [[ ${WARDEN_ENV_TYPE} == "magento1" && -f "${WARDEN_ENV_PATH}/.modman/.basedir" ]]; then
-  export NGINX_PUBLIC='/'$(cat "${WARDEN_ENV_PATH}/.modman/.basedir")
+  NGINX_PUBLIC='/'$(cat "${WARDEN_ENV_PATH}/.modman/.basedir")
+  export NGINX_PUBLIC
 fi
 
 if [[ ${WARDEN_ENV_TYPE} == "magento2" ]]; then
@@ -133,12 +122,6 @@ fi
 [[ ${WARDEN_MAGEPACK} -eq 1 ]] \
     && appendEnvPartialIfExists "${WARDEN_ENV_TYPE}.magepack"
 
-if [[ ${WARDEN_ENV_TYPE} == "drupal" ]] \
-    && [[ -f "${WARDEN_ENV_PATH}/web/sites/default/settings.php" ]]
-then
-    appendEnvPartialIfExists "${WARDEN_ENV_TYPE}.settings"
-fi
-
 if [[ -f "${WARDEN_ENV_PATH}/.warden/warden-env.yml" ]]; then
     DOCKER_COMPOSE_ARGS+=("-f")
     DOCKER_COMPOSE_ARGS+=("${WARDEN_ENV_PATH}/.warden/warden-env.yml")
@@ -164,7 +147,7 @@ fi
 if [[ "${WARDEN_PARAMS[0]}" == "up" ]]; then
     ## create environment network for attachments if it does not already exist
     if [[ $(docker network ls -f "name=$(renderEnvNetworkName)" -q) == "" ]]; then
-        docker compose \
+        ${DOCKER_COMPOSE_COMMAND} \
             --project-directory "${WARDEN_ENV_PATH}" -p "${WARDEN_ENV_NAME}" \
             "${DOCKER_COMPOSE_ARGS[@]}" up --no-start
     fi
@@ -180,12 +163,13 @@ if [[ "${WARDEN_PARAMS[0]}" == "up" ]]; then
 fi
 
 ## lookup address of traefik container on environment network
-export TRAEFIK_ADDRESS="$(docker container inspect traefik \
+TRAEFIK_ADDRESS="$(docker container inspect traefik \
     --format '
         {{- $network := index .NetworkSettings.Networks "'"$(renderEnvNetworkName)"'" -}}
         {{- if $network }}{{ $network.IPAddress }}{{ end -}}
     ' 2>/dev/null || true
 )"
+export TRAEFIK_ADDRESS;
 
 if [[ $OSTYPE =~ ^darwin ]]; then
     export MUTAGEN_SYNC_FILE="${WARDEN_DIR}/environments/${WARDEN_ENV_TYPE}/${WARDEN_ENV_TYPE}.mutagen.yml"
@@ -207,38 +191,46 @@ fi
 if [[ "${WARDEN_PARAMS[0]}" == "stop" ]] \
     && [[ $OSTYPE =~ ^darwin ]] && [[ -f "${MUTAGEN_SYNC_FILE}" ]]
 then
-    den api-sync pause
+    $WARDEN_BIN sync pause
 fi
 
-## pass ochestration through to docker compose
-docker compose \
+## pass orchestration through to docker compose
+${DOCKER_COMPOSE_COMMAND} \
     --project-directory "${WARDEN_ENV_PATH}" -p "${WARDEN_ENV_NAME}" \
     "${DOCKER_COMPOSE_ARGS[@]}" "${WARDEN_PARAMS[@]}" "$@"
 
 ## resume mutagen sync if available and web container id hasn't changed
-if ([[ "${WARDEN_PARAMS[0]}" == "up" ]] || [[ "${WARDEN_PARAMS[0]}" == "start" ]]) \
+if { [[ "${WARDEN_PARAMS[0]}" == "up" ]] || [[ "${WARDEN_PARAMS[0]}" == "start" ]]; } \
     && [[ $OSTYPE =~ ^darwin ]] && [[ -f "${MUTAGEN_SYNC_FILE}" ]] \
-    && [[ $(den api-sync list | grep -i 'Status: \[Paused\]' | wc -l | awk '{print $1}') == "1" ]] \
-    && [[ $(den env ps -q web) ]] \
-    && [[ $(docker container inspect $(den env ps -q web) --format '{{ .State.Status }}') = "running" ]] \
-    && [[ $(den env ps -q web) = $(den api-sync list | grep -i 'URL: docker' | awk -F'/' '{print $3}') ]]
+    && [[ $($WARDEN_BIN sync list | grep -ci 'Status: \[Paused\]' | awk '{print $1}') == "1" ]] \
+    && [[ $($WARDEN_BIN env ps -q web) ]] \
+    && [[ $(docker container inspect "$($WARDEN_BIN env ps -q web)" --format '{{ .State.Status }}') = "running" ]] \
+    && [[ $($WARDEN_BIN env ps -q web) = $($WARDEN_BIN sync list | grep -i 'URL: docker' | awk -F'/' '{print $3}') ]]
 then
-    den api-sync resume
+    $WARDEN_BIN sync resume
 fi
 
-## start mutagen sync if needed
-if ([[ "${WARDEN_PARAMS[0]}" == "up" ]] || [[ "${WARDEN_PARAMS[0]}" == "start" ]]) \
-    && [[ $OSTYPE =~ ^darwin ]] && [[ -f "${MUTAGEN_SYNC_FILE}" ]] \
-    && [[ $(den api-sync list | grep -i 'Connection state: Connected' | wc -l | awk '{print $1}') != "2" ]] \
-    && [[ $(den env ps -q web) ]] \
-    && [[ $(docker container inspect $(den env ps -q web) --format '{{ .State.Status }}') = "running" ]]
+if [[ $OSTYPE =~ ^darwin ]] && [[ -f "${MUTAGEN_SYNC_FILE}" ]] # If we're using Mutagen
 then
-    den api-sync start
+  MUTAGEN_VERSION=$(mutagen version)
+  CONNECTION_STATE_STRING='Connected state: Connected'
+  if [[ $(version "${MUTAGEN_VERSION}") -ge $(version '0.15.0') ]]; then
+    CONNECTION_STATE_STRING='Connected: Yes'
+  fi
+
+  ## start mutagen sync if needed
+  if { [[ "${WARDEN_PARAMS[0]}" == "up" ]] || [[ "${WARDEN_PARAMS[0]}" == "start" ]]; } \
+      && [[ $($WARDEN_BIN sync list | grep -c "${CONNECTION_STATE_STRING}" | awk '{print $1}') != "2" ]] \
+      && [[ $($WARDEN_BIN env ps -q web) ]] \
+      && [[ $(docker container inspect "$($WARDEN_BIN env ps -q web)" --format '{{ .State.Status }}') = "running" ]]
+  then
+      $WARDEN_BIN sync start
+  fi
 fi
 
 ## stop mutagen sync if needed
 if [[ "${WARDEN_PARAMS[0]}" == "down" ]] \
     && [[ $OSTYPE =~ ^darwin ]] && [[ -f "${MUTAGEN_SYNC_FILE}" ]]
 then
-    den api-sync stop
+    $WARDEN_BIN sync stop
 fi

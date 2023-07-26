@@ -1,16 +1,17 @@
-import databases
 import ormar
 import sqlalchemy
 
+from databases import Database
 from .config import settings
 
-database = databases.Database(settings.db_url)
+database = Database(settings.db_url)
 metadata = sqlalchemy.MetaData()
 
 class BaseMeta(ormar.ModelMeta):
     metadata = metadata
     database = database
 
+#Test table - for initial tests purposes.
 class User(ormar.Model):
     class Meta(BaseMeta):
         tablename = "users"

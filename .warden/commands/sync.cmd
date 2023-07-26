@@ -58,7 +58,7 @@ case "${WARDEN_PARAMS[0]}" in
         ## create sync session based on environment type configuration
         mutagen sync create -c "${MUTAGEN_SYNC_FILE}" \
             --label "warden-sync=${WARDEN_ENV_NAME}" --ignore "${WARDEN_SYNC_IGNORE:-}" \
-            "${WARDEN_ENV_PATH}${WARDEN_WEB_ROOT:-}" "docker://$(den env ps -q web)/app/app"
+            "${WARDEN_ENV_PATH}${WARDEN_WEB_ROOT:-}" "docker://$($WARDEN_BIN env ps -q web)/app"
 
         ## wait for sync session to complete initial sync before exiting
         echo "Waiting for initial synchronization to complete"

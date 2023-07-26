@@ -1,0 +1,52 @@
+name: fastapi
+services:
+  db:
+    environment:
+      POSTGRES_DB: fastapi_traefik
+      POSTGRES_PASSWORD: fastapi_traefik
+      POSTGRES_USER: fastapi_traefik
+    expose:
+      - "5432"
+    image: postgres:15-alpine
+    networks:
+      default: null
+    volumes:
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql/data
+        volume: {}
+  web:
+    build:
+      context: /Users/andre/sites/fastapi
+      dockerfile: ./.warden/fastapi/Dockerfile
+    depends_on:
+      db:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://fastapi_traefik:fastapi_traefik@db:5432/fastapi_traefik
+    expose:
+      - "80"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.fastapi.rule: Host(`app.fastapi.test`)
+      traefik.http.routers.fastapi.tls: "true"
+    networks:
+      default: null
+      scrubsandbeyondphp8_default: null
+    volumes:
+      - type: bind
+        source: /Users/andre/sites/fastapi
+        target: /app
+        bind:
+          create_host_path: true
+networks:
+  default:
+    name: fastapi_default
+    labels:
+      dev.warden.environment.name: fastapi
+      dev.warden.environment.type: local
+  scrubsandbeyondphp8_default:
+    name: scrubsandbeyondphp8_default
+volumes:
+  postgres_data:
+    name: fastapi_postgres_data
